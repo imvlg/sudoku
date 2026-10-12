@@ -28,6 +28,10 @@ function formatTimeUntilMidnight(now = new Date()): string {
   return `${h}:${m}:${sec}`;
 }
 
+function hasProgress(g: GameState): boolean {
+  return g.grid.some((row) => row.some((cell) => !cell.isInitial && (cell.value !== 0 || cell.notes.length > 0)));
+}
+
 interface BoardProps {
   grid: Grid;
   selectedCell: [number, number] | null;
@@ -282,10 +286,7 @@ const Controls: React.FC<ControlsProps> = ({
 };
 
 export default function App() {
-  const [screen, setScreen] = useState<'menu' | 'play'>(() => {
-    const saved = loadActiveGame();
-    return saved && !saved.isCompleted ? 'play' : 'menu';
-  });
+  const [screen, setScreen] = useState<'menu' | 'play'>('menu');
 
   const [theme, setTheme] = useState<'light' | 'dark'>(() => loadSavedTheme());
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -634,8 +635,22 @@ export default function App() {
           </div>
 
           <div className="w-full flex flex-col gap-3">
+            {!game.isCompleted && game.mode !== 'daily' && hasProgress(game) && (
+              <button
+                onClick={() => setScreen('play')}
+                className="w-full py-3.5 px-6 rounded-xl border border-stone-950 dark:border-stone-100 bg-stone-900 text-stone-50 dark:bg-stone-100 dark:text-stone-950 text-base font-semibold transition-all active:scale-98 shadow-xs"
+              >
+                Continue
+              </button>
+            )}
+
             <button
-              onClick={() => startMode('daily')}
+              onClick={() => {
+                const isTodaysDaily =
+                  game.mode === 'daily' && game.dateString === getLocalDateString() && !game.isCompleted;
+                if (isTodaysDaily) setScreen('play');
+                else startMode('daily');
+              }}
               className="w-full py-2.5 px-6 rounded-xl border border-stone-400 dark:border-stone-700 bg-stone-200/90 hover:bg-stone-300 dark:bg-stone-800 dark:hover:bg-stone-700 text-stone-950 dark:text-stone-50 text-base font-semibold transition-all active:scale-98 flex flex-col items-center justify-center shadow-xs"
             >
               <span className="flex items-center gap-2">
