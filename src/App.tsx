@@ -8,12 +8,12 @@ import {
   createGame,
   getLocalDateString,
   isBoardCompleted,
-  getRemainingCounts,
   loadSavedTheme,
   saveTheme,
   loadActiveGame,
   saveActiveGame,
   isDailyCompletedToday,
+  getDailyRecord,
   markDailyCompleted,
   sounds,
 } from './sudoku';
@@ -26,6 +26,14 @@ function formatTimeUntilMidnight(now = new Date()): string {
   const m = String(Math.floor((total % 3600) / 60)).padStart(2, '0');
   const sec = String(total % 60).padStart(2, '0');
   return `${h}:${m}:${sec}`;
+}
+
+function formatDuration(ms = 0): string {
+  const total = Math.floor(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const m = String(Math.floor((total % 3600) / 60)).padStart(2, '0');
+  const sec = String(total % 60).padStart(2, '0');
+  return h > 0 ? `${h}:${m}:${sec}` : `${m}:${sec}`;
 }
 
 function hasProgress(g: GameState): boolean {
@@ -155,9 +163,11 @@ interface ControlsProps {
   canUndo: boolean;
   isPencilMode: boolean;
   onTogglePencil: () => void;
-  remainingCounts: Record<number, number>;
   size?: number;
 }
+
+const NUM_BTN =
+  'bg-stone-200/90 hover:bg-stone-300 dark:bg-stone-800 dark:hover:bg-stone-700 border border-stone-300 dark:border-stone-700 text-stone-950 dark:text-stone-50 active:scale-95 shadow-xs';
 
 const Controls: React.FC<ControlsProps> = ({
   onInputNumber,
@@ -166,7 +176,6 @@ const Controls: React.FC<ControlsProps> = ({
   canUndo,
   isPencilMode,
   onTogglePencil,
-  remainingCounts,
   size = 9,
 }) => {
   const is12 = size === 12;
@@ -214,71 +223,33 @@ const Controls: React.FC<ControlsProps> = ({
 
       {is12 ? (
         <div className="flex flex-col gap-1.5">
-          <div className="grid grid-cols-6 gap-1 sm:gap-1.5">
-            {numbers.slice(0, 6).map((num) => {
-              const remaining = remainingCounts[num] ?? 0;
-              const isDone = remaining <= 0;
-              return (
+          {[numbers.slice(0, 6), numbers.slice(6, 12)].map((rowNums, i) => (
+            <div key={i} className="grid grid-cols-6 gap-1 sm:gap-1.5">
+              {rowNums.map((num) => (
                 <button
                   key={num}
                   type="button"
                   onClick={() => onInputNumber(num)}
-                  disabled={isDone}
-                  className={`flex items-center justify-center h-11 sm:h-12 rounded-xl font-tabular text-lg sm:text-xl font-bold transition-all ${
-                    isDone
-                      ? 'opacity-20 text-stone-400 dark:text-stone-600 border border-stone-200 dark:border-stone-800 cursor-default'
-                      : 'bg-stone-200/90 hover:bg-stone-300 dark:bg-stone-800 dark:hover:bg-stone-700 border border-stone-300 dark:border-stone-700 text-stone-950 dark:text-stone-50 active:scale-95 shadow-xs'
-                  }`}
+                  className={`flex items-center justify-center h-11 sm:h-12 rounded-xl font-tabular text-lg sm:text-xl font-bold transition-all ${NUM_BTN}`}
                 >
                   {num}
                 </button>
-              );
-            })}
-          </div>
-          <div className="grid grid-cols-6 gap-1 sm:gap-1.5">
-            {numbers.slice(6, 12).map((num) => {
-              const remaining = remainingCounts[num] ?? 0;
-              const isDone = remaining <= 0;
-              return (
-                <button
-                  key={num}
-                  type="button"
-                  onClick={() => onInputNumber(num)}
-                  disabled={isDone}
-                  className={`flex items-center justify-center h-11 sm:h-12 rounded-xl font-tabular text-lg sm:text-xl font-bold transition-all ${
-                    isDone
-                      ? 'opacity-20 text-stone-400 dark:text-stone-600 border border-stone-200 dark:border-stone-800 cursor-default'
-                      : 'bg-stone-200/90 hover:bg-stone-300 dark:bg-stone-800 dark:hover:bg-stone-700 border border-stone-300 dark:border-stone-700 text-stone-950 dark:text-stone-50 active:scale-95 shadow-xs'
-                  }`}
-                >
-                  {num}
-                </button>
-              );
-            })}
-          </div>
+              ))}
+            </div>
+          ))}
         </div>
       ) : (
         <div className="grid grid-cols-9 gap-1 sm:gap-1.5">
-          {numbers.map((num) => {
-            const remaining = remainingCounts[num] ?? 0;
-            const isDone = remaining <= 0;
-
-            return (
-              <button
-                key={num}
-                type="button"
-                onClick={() => onInputNumber(num)}
-                disabled={isDone}
-                className={`flex items-center justify-center h-12 sm:h-14 rounded-xl font-tabular text-xl sm:text-2xl font-bold transition-all ${
-                  isDone
-                    ? 'opacity-20 text-stone-400 dark:text-stone-600 border border-stone-200 dark:border-stone-800 cursor-default'
-                    : 'bg-stone-200/90 hover:bg-stone-300 dark:bg-stone-800 dark:hover:bg-stone-700 border border-stone-300 dark:border-stone-700 text-stone-950 dark:text-stone-50 active:scale-95 shadow-xs'
-                }`}
-              >
-                {num}
-              </button>
-            );
-          })}
+          {numbers.map((num) => (
+            <button
+              key={num}
+              type="button"
+              onClick={() => onInputNumber(num)}
+              className={`flex items-center justify-center h-12 sm:h-14 rounded-xl font-tabular text-xl sm:text-2xl font-bold transition-all ${NUM_BTN}`}
+            >
+              {num}
+            </button>
+          ))}
         </div>
       )}
     </div>
@@ -286,7 +257,8 @@ const Controls: React.FC<ControlsProps> = ({
 };
 
 export default function App() {
-  const [screen, setScreen] = useState<'menu' | 'play'>('menu');
+  const [screen, setScreen] = useState<'menu' | 'play' | 'review'>('menu');
+  const [review, setReview] = useState<GameState | null>(null);
 
   const [theme, setTheme] = useState<'light' | 'dark'>(() => loadSavedTheme());
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -323,6 +295,16 @@ export default function App() {
     saveTheme(theme);
   }, [theme]);
 
+  // Count play time only while the puzzle is on screen and the tab is visible.
+  useEffect(() => {
+    if (screen !== 'play' || game.isCompleted) return;
+    const id = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      setGame((prev) => (prev.isCompleted ? prev : { ...prev, elapsedMs: (prev.elapsedMs ?? 0) + 1000 }));
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [screen, game.isCompleted]);
+
   useEffect(() => {
     sounds.setMuted(!soundEnabled);
   }, [soundEnabled]);
@@ -343,6 +325,16 @@ export default function App() {
     setShowDifficultySelect(false);
     setShowSpecialSelect(false);
     setScreen('play');
+  };
+
+  // Today's daily is already solved: show the finished board read-only.
+  const openDailyReview = (date: string, grid?: Grid, elapsedMs?: number) => {
+    const base = createGame('daily', 'medium', date);
+    const solvedGrid =
+      grid ?? base.grid.map((row) => row.map((cl) => ({ ...cl, value: cl.solution, notes: [] })));
+    setReview({ ...base, grid: solvedGrid, isCompleted: true, elapsedMs });
+    setSelectedCell(null);
+    setScreen('review');
   };
 
   const handleRestart = () => {
@@ -416,49 +408,10 @@ export default function App() {
         return;
       }
 
-      const isCorrect = num === cell.solution;
-      if (isCorrect) {
-        sounds.playPlaceNumber(num);
-      } else {
-        sounds.playError();
-      }
-
       setGame((prev) => {
         const nextGrid = prev.grid.map((row) => row.map((cl) => ({ ...cl })));
         nextGrid[r][c].value = num;
         nextGrid[r][c].notes = [];
-
-        if (isCorrect) {
-          const size = prev.size;
-          const boxRows = prev.boxRows;
-          const boxCols = prev.boxCols;
-          const boxR = Math.floor(r / boxRows) * boxRows;
-          const boxC = Math.floor(c / boxCols) * boxCols;
-
-          for (let i = 0; i < size; i++) {
-            nextGrid[r][i].notes = nextGrid[r][i].notes.filter((n) => n !== num);
-            nextGrid[i][c].notes = nextGrid[i][c].notes.filter((n) => n !== num);
-          }
-          for (let i = 0; i < boxRows; i++) {
-            for (let j = 0; j < boxCols; j++) {
-              nextGrid[boxR + i][boxC + j].notes = nextGrid[boxR + i][boxC + j].notes.filter(
-                (n) => n !== num
-              );
-            }
-          }
-          if (prev.mode === 'special_diagonal') {
-            if (r === c) {
-              for (let i = 0; i < 9; i++) {
-                nextGrid[i][i].notes = nextGrid[i][i].notes.filter((n) => n !== num);
-              }
-            }
-            if (r + c === 8) {
-              for (let i = 0; i < 9; i++) {
-                nextGrid[i][8 - i].notes = nextGrid[i][8 - i].notes.filter((n) => n !== num);
-              }
-            }
-          }
-        }
 
         const nextHistory = [
           ...prev.history,
@@ -475,9 +428,9 @@ export default function App() {
         const completed = isBoardCompleted(nextGrid);
         if (completed) {
           sounds.playVictory();
-          if (prev.mode === 'daily') {
-            markDailyCompleted(getLocalDateString());
-            setDailyDone(true);
+          if (prev.mode === 'daily' && prev.dateString) {
+            markDailyCompleted(prev.dateString, nextGrid, prev.elapsedMs ?? 0);
+            setDailyDone(isDailyCompletedToday());
           }
         }
 
@@ -596,8 +549,6 @@ export default function App() {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
   };
 
-  const remainingCounts = getRemainingCounts(game.grid, game.size);
-
   if (screen === 'menu') {
     return (
       <div className="min-h-screen flex flex-col items-center justify-between p-6 bg-stone-100 dark:bg-stone-950 text-stone-900 dark:text-stone-100 transition-colors">
@@ -646,10 +597,15 @@ export default function App() {
 
             <button
               onClick={() => {
-                const isTodaysDaily =
-                  game.mode === 'daily' && game.dateString === getLocalDateString() && !game.isCompleted;
-                if (isTodaysDaily) setScreen('play');
-                else startMode('daily');
+                const today = getLocalDateString();
+                const record = getDailyRecord(today);
+                if (record) {
+                  openDailyReview(today, record.grid, record.elapsedMs);
+                } else if (game.mode === 'daily' && game.dateString === today && !game.isCompleted) {
+                  setScreen('play');
+                } else {
+                  startMode('daily');
+                }
               }}
               className="w-full py-2.5 px-6 rounded-xl border border-stone-400 dark:border-stone-700 bg-stone-200/90 hover:bg-stone-300 dark:bg-stone-800 dark:hover:bg-stone-700 text-stone-950 dark:text-stone-50 text-base font-semibold transition-all active:scale-98 flex flex-col items-center justify-center shadow-xs"
             >
@@ -730,6 +686,8 @@ export default function App() {
     );
   }
 
+  const view = screen === 'review' && review ? review : game;
+
   return (
     <div className="min-h-screen flex flex-col justify-between items-center p-3 sm:p-5 bg-stone-100 dark:bg-stone-950 text-stone-900 dark:text-stone-100 transition-colors">
       <div className="w-full max-w-[480px] flex items-center justify-between py-1">
@@ -754,7 +712,7 @@ export default function App() {
           </div>
         </div>
 
-        {game.mode !== 'daily' ? (
+        {view.mode !== 'daily' ? (
           <button
             onClick={handleRestart}
             className="p-2 text-stone-600 hover:text-stone-950 dark:text-stone-300 dark:hover:text-stone-50 transition-colors"
@@ -769,23 +727,26 @@ export default function App() {
 
       <div className="w-full my-auto py-2">
         <Board
-          grid={game.grid}
+          grid={view.grid}
           selectedCell={selectedCell}
           onSelectCell={handleSelectCell}
-          size={game.size}
-          boxRows={game.boxRows}
-          boxCols={game.boxCols}
-          isSpecialDiagonal={game.mode === 'special_diagonal'}
+          size={view.size}
+          boxRows={view.boxRows}
+          boxCols={view.boxCols}
+          isSpecialDiagonal={view.mode === 'special_diagonal'}
         />
       </div>
 
-      {game.isCompleted ? (
+      {view.isCompleted ? (
         <div className="w-full max-w-[480px] flex flex-col items-center gap-3 py-4 animate-in fade-in duration-200">
-          <div className="w-16 h-16 sm:w-20 sm:h-20 flex items-center justify-center rounded-xl border border-stone-400 dark:border-stone-600 bg-stone-100 dark:bg-stone-900 shadow-2xs">
-            <span className="font-kanji font-black text-3xl sm:text-4xl text-stone-950 dark:text-stone-50 select-none">
-              完
+          {view.elapsedMs !== undefined && (
+            <span
+              className="font-mono font-tabular text-xs tracking-wider text-stone-500 dark:text-stone-400"
+              aria-label="Solve time"
+            >
+              {formatDuration(view.elapsedMs)}
             </span>
-          </div>
+          )}
           <div className="flex gap-3">
             <button
               onClick={() => setScreen('menu')}
@@ -793,12 +754,14 @@ export default function App() {
             >
               Menu
             </button>
+            {view.mode !== 'daily' && (
             <button
               onClick={handleRestart}
               className="px-5 py-2.5 rounded-xl bg-stone-900 dark:bg-stone-100 text-stone-50 dark:text-stone-950 text-sm font-semibold active:scale-95 transition-all shadow-xs"
             >
               New
             </button>
+            )}
           </div>
         </div>
       ) : (
@@ -807,11 +770,10 @@ export default function App() {
             onInputNumber={handleInputNumber}
             onErase={handleErase}
             onUndo={handleUndo}
-            canUndo={game.history.length > 0}
+            canUndo={view.history.length > 0}
             isPencilMode={isPencilMode}
             onTogglePencil={() => setIsPencilMode((prev) => !prev)}
-            remainingCounts={remainingCounts}
-            size={game.size}
+            size={view.size}
           />
         </div>
       )}

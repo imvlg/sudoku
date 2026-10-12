@@ -33,6 +33,7 @@ export interface GameState {
   grid: Grid;
   history: Move[];
   isCompleted: boolean;
+  elapsedMs?: number;
 }
 
 export function createPrng(seedStr: string): () => number {
@@ -394,44 +395,76 @@ export function saveActiveGame(game: GameState | null) {
   }
 }
 
-export function isDailyCompletedToday(): boolean {
-  try {
-    const today = getLocalDateString();
-    const raw = localStorage.getItem(STORAGE_DAILY);
-    if (raw) {
-      const records = JSON.parse(raw);
-      return !!records[today];
-    }
-  } catch {
-    return false;
-  }
-  return false;
+export interface DailyRecord {
+  grid?: Grid;
+  elapsedMs?: number;
 }
 
-export function markDailyCompleted(dateString: string) {
+function loadDailyRecords(): Record<string, DailyRecord | true> {
   try {
     const raw = localStorage.getItem(STORAGE_DAILY);
-    const records = raw ? JSON.parse(raw) : {};
-    records[dateString] = true;
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function getDailyRecord(dateString = getLocalDateString()): DailyRecord | null {
+  const rec = loadDailyRecords()[dateString];
+  if (!rec) return null;
+  return rec === true ? {} : rec;
+}
+
+export function isDailyCompletedToday(): boolean {
+  return getDailyRecord() !== null;
+}
+
+export function markDailyCompleted(dateString: string, grid: Grid, elapsedMs: number) {
+  try {
+    const records = loadDailyRecords();
+    records[dateString] = { grid, elapsedMs };
     localStorage.setItem(STORAGE_DAILY, JSON.stringify(records));
   } catch {
     return;
   }
 }
 
+// Minimal, quiet square-wave blips in the spirit of early Japanese handhelds.
+// Placing a digit is deliberately silent so sound never hints at correctness.
 class SoundEngine {
   private ctx: AudioContext | null = null;
-  private isMuted: boolean = false;
+  private isMuted = false;
+  private readonly volume = 0.025;
 
   private initContext() {
     if (!this.ctx && typeof window !== 'undefined') {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (AudioCtx) {
-        this.ctx = new AudioCtx();
-      }
+      const AudioCtx =
+        window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (AudioCtx) this.ctx = new AudioCtx();
     }
-    if (this.ctx && this.ctx.state === 'suspended') {
-      this.ctx.resume();
+    if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
+  }
+
+  private blip(freq: number, duration: number, delay = 0, endFreq?: number) {
+    if (this.isMuted) return;
+    try {
+      this.initContext();
+      if (!this.ctx) return;
+      const t = this.ctx.currentTime + delay;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(freq, t);
+      if (endFreq) osc.frequency.setValueAtTime(endFreq, t + duration / 2);
+      gain.gain.setValueAtTime(this.volume, t);
+      gain.gain.setValueAtTime(this.volume, t + duration * 0.7);
+      gain.gain.linearRampToValueAtTime(0, t + duration);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(t);
+      osc.stop(t + duration + 0.01);
+    } catch {
+      return;
     }
   }
 
@@ -443,138 +476,21 @@ class SoundEngine {
     return this.isMuted;
   }
 
-  public playPlaceNumber(num = 5) {
-    if (this.isMuted) return;
-    try {
-      this.initContext();
-      if (!this.ctx) return;
-
-      const baseFreq = 340 + num * 45;
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(baseFreq, this.ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(baseFreq * 0.92, this.ctx.currentTime + 0.08);
-
-      gain.gain.setValueAtTime(0.12, this.ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.12);
-
-      osc.connect(gain);
-      gain.connect(this.ctx.destination);
-
-      osc.start();
-      osc.stop(this.ctx.currentTime + 0.13);
-    } catch {
-      return;
-    }
-  }
-
+  /** Notes toggle: a tiny high tick. */
   public playPencil() {
-    if (this.isMuted) return;
-    try {
-      this.initContext();
-      if (!this.ctx) return;
-
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(820, this.ctx.currentTime);
-
-      gain.gain.setValueAtTime(0.04, this.ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.04);
-
-      osc.connect(gain);
-      gain.connect(this.ctx.destination);
-
-      osc.start();
-      osc.stop(this.ctx.currentTime + 0.05);
-    } catch {
-      return;
-    }
+    this.blip(1568, 0.025);
   }
 
+  /** Erase / undo: two-step downward blip. */
   public playErase() {
-    if (this.isMuted) return;
-    try {
-      this.initContext();
-      if (!this.ctx) return;
-
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(260, this.ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(140, this.ctx.currentTime + 0.09);
-
-      gain.gain.setValueAtTime(0.08, this.ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.1);
-
-      osc.connect(gain);
-      gain.connect(this.ctx.destination);
-
-      osc.start();
-      osc.stop(this.ctx.currentTime + 0.1);
-    } catch {
-      return;
-    }
+    this.blip(784, 0.05, 0, 523);
   }
 
-  public playError() {
-    if (this.isMuted) return;
-    try {
-      this.initContext();
-      if (!this.ctx) return;
-
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(160, this.ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(110, this.ctx.currentTime + 0.15);
-
-      gain.gain.setValueAtTime(0.14, this.ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.18);
-
-      osc.connect(gain);
-      gain.connect(this.ctx.destination);
-
-      osc.start();
-      osc.stop(this.ctx.currentTime + 0.18);
-    } catch {
-      return;
-    }
-  }
-
+  /** Puzzle solved: three short rising notes. */
   public playVictory() {
-    if (this.isMuted) return;
-    try {
-      this.initContext();
-      if (!this.ctx) return;
-
-      const chord = [523.25, 659.25, 783.99, 987.77, 1046.5];
-      chord.forEach((freq, i) => {
-        if (!this.ctx) return;
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
-
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(freq, this.ctx.currentTime + i * 0.1);
-
-        const startTime = this.ctx.currentTime + i * 0.1;
-        gain.gain.setValueAtTime(0.08, startTime);
-        gain.gain.exponentialRampToValueAtTime(0.0001, startTime + 1.2);
-
-        osc.connect(gain);
-        gain.connect(this.ctx.destination);
-
-        osc.start(startTime);
-        osc.stop(startTime + 1.3);
-      });
-    } catch {
-      return;
-    }
+    this.blip(523, 0.07, 0);
+    this.blip(659, 0.07, 0.09);
+    this.blip(1047, 0.14, 0.18);
   }
 }
 
